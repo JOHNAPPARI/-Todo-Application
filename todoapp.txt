@@ -1,0 +1,182 @@
+const express = require("express");
+const sqlite3 = require("sqlite3");
+const { open } = require("sqlite");
+const path = require("path");
+const { format, isValid } = require("date-fns");
+
+const dbPath = path.join(__dirname, "todoApplication.db");
+const app = express();
+
+app.use(express.json());
+let db = null;
+
+const initializeDbAndServer = async () => {
+  try {
+    db = await open({
+      filename: dbPath,
+      driver: sqlite3.Database,
+    });
+    app.listen(3000, () => {
+      console.log("The server is Running");
+      //console.log(format(new Date(2014, 1, 11), "yyyy/MM/dd"));
+      //console.log(isDate(new Date(2020, 09, 18)));
+    });
+  } catch (e) {
+    console.log(`DB error: ${e.message}`);
+    process.exit(1);
+  }
+};
+
+initializeDbAndServer();
+
+const validateRequest = (request, response, next) => {
+  const { priority = "", status = "", category = "" } = request.query;
+  const priorityArr = ["", "HIGH", "MEDIUM", "LOW"];
+  const statusArr = ["", "TO DO", "IN PROGRESS", "DONE"];
+  const categoryArr = ["", "WORK", "HOME", "LEARNING"];
+  if (!priorityArr.includes(priority)) {
+    response.status(400);
+    response.send("Invalid Todo Priority");
+  } else if (!statusArr.includes(status)) {
+    response.status(400);
+    response.send("Invalid Todo Status");
+  } else if (!categoryArr.includes(category)) {
+    response.status(400);
+    response.send("Invalid Todo Category");
+  } else {
+    next();
+  }
+};
+const validateRequestForPost = (request, response, next) => {
+  const { priority = "", status = "", category = "" } = request.body;
+  const priorityArr = ["", "HIGH", "MEDIUM", "LOW"];
+  const statusArr = ["", "TO DO", "IN PROGRESS", "DONE"];
+  const categoryArr = ["", "WORK", "HOME", "LEARNING"];
+  if (!priorityArr.includes(priority)) {
+    response.status(400);
+    response.send("Invalid Todo Priority");
+  } else if (!statusArr.includes(status)) {
+    response.status(400);
+    response.send("Invalid Todo Status");
+  } else if (!categoryArr.includes(category)) {
+    response.status(400);
+    response.send("Invalid Todo Category");
+  } else {
+    next();
+  }
+};
+
+const validateDate = (request, response, next) => {
+  const { date } = request.query;
+  if (isValid(new Date(date))) {
+    next();
+  } else {
+    response.status(400);
+    response.send("Invalid Due Date");
+  }
+};
+
+const convertTodoObject = (dbObject) => {
+  return {
+    id: dbObject.id,
+    todo: dbObject.todo,
+    priority: dbObject.priority,
+    category: dbObject.category,
+    status: dbObject.status,
+    dueDate: dbObject.due_date,
+  };
+};
+
+//get todo list
+app.get("/todos/", validateRequest, async (request, response) => {
+  const {
+    status = "",
+    priority = "",
+    category = "",
+    search_q = "",
+  } = request.query;
+  const getTodoQuery = `select * from todo where 
+  todo like '%${search_q}%' and status like '%${status}%'and priority like '%${priority}%'and category like '%${category}%';`;
+  const todoList = await db.all(getTodoQuery);
+  response.send(todoList.map((eachElement) => convertTodoObject(eachElement)));
+});
+
+//get todo with id
+app.get("/todos/:todoId/", async (request, response) => {
+  const { todoId } = request.params;
+  const getTodoQuery = `select * from todo where id = '${todoId}';`;
+  const todoItem = await db.get(getTodoQuery);
+  response.send(convertTodoObject(todoItem));
+});
+
+//get todo with specific due date
+app.get("/agenda", validateDate, async (request, response) => {
+  const { date = "" } = request.query;
+  const newDate = format(new Date(date), "yyyy-MM-dd");
+  const getAgendaTodo = `select * from todo where due_date like '%${newDate}%';`;
+  const todo = await db.all(getAgendaTodo);
+  response.send(todo.map((each) => convertTodoObject(each)));
+});
+
+//post a todo
+app.post("/todos/", validateRequestForPost, async (request, response) => {
+  const { id, todo, priority, status, category, dueDate } = request.body;
+  if (isValid(new Date(dueDate))) {
+    const PostNewTodoQuery = `INSERT INTO 
+            todo(id, todo, priority, status, category, due_date)
+            VALUES(
+                '${id}',
+                '${todo}',
+                '${priority}',
+                '${status}',
+                '${category}',
+                '${dueDate}'
+                );`;
+    await db.run(PostNewTodoQuery);
+    response.send("Todo Successfully Added");
+  } else {
+    response.status(400);
+    response.send("Invalid Due Date");
+  }
+});
+
+//update a todo
+app.put("/todos/:todoId", validateRequestForPost, async (request, response) => {
+  const { todoId } = request.params;
+  const { status, priority, todo, category, dueDate } = request.body;
+  if (status !== undefined) {
+    const updateTodo = `update todo set status = '${status}' where id = '${todoId}';`;
+    await db.run(updateTodo);
+    response.send("Status Updated");
+  } else if (priority !== undefined) {
+    const updateTodo = `update todo set priority = '${priority}' where id = '${todoId}';`;
+    await db.run(updateTodo);
+    response.send("Priority Updated");
+  } else if (todo !== undefined) {
+    const updateTodo = `update todo set todo = '${todo}' where id = '${todoId}';`;
+    await db.run(updateTodo);
+    response.send("Todo Updated");
+  } else if (category !== undefined) {
+    const updateTodo = `update todo set category = '${category}' where id = '${todoId}';`;
+    await db.run(updateTodo);
+    response.send("Category Updated");
+  } else if (dueDate !== undefined) {
+    if (isValid(new Date(dueDate))) {
+      const updateTodo = `update todo set due_date = '${dueDate}' where id = '${todoId}';`;
+      await db.run(updateTodo);
+      response.send("Due Date Updated");
+    } else {
+      response.status(400);
+      response.send("Invalid Due Date");
+    }
+  }
+});
+
+app.delete("/todos/:todoId", async (request, response) => {
+  const { todoId } = request.params;
+  const deleteTodoQuery = `delete from todo where id = '${todoId}';`;
+  await db.run(deleteTodoQuery);
+  response.send("Todo Deleted");
+});
+
+module.exports = app;
